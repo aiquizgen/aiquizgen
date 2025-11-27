@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Quiz</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav>
+    <h1>AI Study Assistant</h1>
+    <ul>
+      <li><a href="index.html">Home</a></li>
+      <li><a href="explanation.html">Explanation</a></li>
+      <li><a href="quiz.html" class="active">Quiz</a></li>
+    </ul>
+  </nav>
+  
+  <main class="content">
+    <div id="quiz-container">
+      <h2>AI Practice Quiz</h2>
+      
+      <div id="noQuizMessage" class="hidden" style="text-align: center; padding: 4rem 2rem;">
+        <div style="font-size: 4rem; margin-bottom: 1.5rem;">🧠</div>
+        <h3 style="color: var(--text-main); font-size: 1.5rem; margin-bottom: 1rem;">No Quiz Available</h3>
+        <p style="color: var(--text-muted); font-size: 1.125rem; margin-bottom: 2rem; max-width: 500px; margin-left: auto; margin-right: auto;">
+          You need to process your study files first to generate a quiz. Please view the explanation page first.
+        </p>
+        <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+          <button class="btn" style="background: var(--bg-surface); color: var(--text-body);" onclick="window.location.href='explanation.html'">View Explanation</button>
+          <button class="btn" onclick="window.location.href='index.html'">Upload Files</button>
+        </div>
+      </div>
+
+      <div id="loadingQuiz" style="text-align: center; padding: 3rem;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">🧠</div>
+        <p style="color: var(--text-muted); font-size: 1.125rem;">Waiting for AI to create your quiz...</p>
+        <div style="display: inline-block; margin-top: 1rem; width: 40px; height: 40px; border: 3px solid var(--theme-border); border-top-color: var(--accent-color); border-radius: 50%; animation: spin 1s linear infinite;"></div>
+      </div>
+      
+      <div id="quizContent" class="hidden">
+
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2025 AI Study Assistant — Powered by OpenAI</p>
+      <p class="footer-tagline">Transforming the way you learn, one file at a time.</p>
+    </div>
+  </footer>
+  <script src="script.js"></script>
+</body>
+</html>

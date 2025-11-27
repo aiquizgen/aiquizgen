@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AI-powered study assistant that transforms your notes, PDFs, and slides into comprehensive explanations and interactive quizzes." />
+  <title>AI Study Assistant - Transform Your Study Materials</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <nav>
+    <h1>AI Study Assistant</h1>
+    <ul>
+      <li><a href="index.html" class="active">Home</a></li>
+      <li><a href="explanation.html">Explanation</a></li>
+      <li><a href="quiz.html">Quiz</a></li>
+    </ul>
+  </nav>
+
+  <section class="hero">
+    <div class="hero-content">
+      <h1 class="hero-title">Transform Your Study Materials Into Learning Power</h1>
+      <p class="hero-subtitle">Upload your notes, PDFs, or presentations and let AI generate comprehensive explanations and interactive quizzes to supercharge your learning.</p>
+      <div class="hero-buttons">
+        <a href="#upload-section" class="btn btn-primary">Get Started</a>
+        <a href="#how-it-works" class="btn btn-secondary">Learn More</a>
+      </div>
+    </div>
+    <div class="hero-illustration">
+      <div class="hero-icon">🧠</div>
+    </div>
+  </section>
+
+  <section id="features" class="features-section">
+    <div class="container">
+      <h2 class="section-title">Powerful Features</h2>
+      <p class="section-subtitle">Everything you need to enhance your study experience</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">📄</div>
+          <h3>Smart File Processing</h3>
+          <p>Upload PDFs, Word documents, PowerPoint presentations, and text files. Our AI extracts and processes content from multiple file formats.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📚</div>
+          <h3>AI-Generated Explanations</h3>
+          <p>Get detailed, easy-to-understand explanations of your study materials. Complex topics broken down into digestible content.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <h3>Interactive Quizzes</h3>
+          <p>Test your knowledge with AI-generated quizzes. Immediate feedback helps you identify areas that need more practice.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3>Fast Processing</h3>
+          <p>Get results in seconds. Our optimized AI pipeline processes your files quickly without compromising quality.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>Secure & Private</h3>
+          <p>Your files are processed securely. All data is stored locally in your browser session for maximum privacy.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💡</div>
+          <h3>Personalized Learning</h3>
+          <p>Content tailored to your uploaded materials. Focus on what matters most for your studies.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how-it-works" class="how-it-works-section">
+    <div class="container">
+      <h2 class="section-title">How It Works</h2>
+      <p class="section-subtitle">Three simple steps to transform your study materials</p>
+      <div class="steps-container">
+        <div class="step">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3>Upload Your Files</h3>
+            <p>Drag and drop or select your study materials. We support PDFs, Word documents, PowerPoint presentations, and text files. Upload multiple files at once for comprehensive processing.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3>AI Processing</h3>
+            <p>Our advanced AI analyzes your content, extracts key information, and structures it into clear explanations. This process typically takes just a few seconds.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h3>Learn & Practice</h3>
+            <p>Review the generated explanations to understand complex topics, then test your knowledge with interactive quizzes. Track your progress and improve.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="upload-section" class="upload-section">
+    <div class="container">
+      <h2 class="section-title">Ready to Start Learning?</h2>
+      <p class="section-subtitle">Upload your study files and let AI do the rest</p>
+      <div class="drop-zone" id="dropZone">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 0 auto 1.5rem; display: block; color: var(--accent-color);">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+        <h3>Drop your study files here</h3>
+        <p>Upload notes, PDFs, or slides — the AI will summarize and create tests for you.</p>
+        <input type="file" id="fileInput" multiple accept=".pdf,.txt,.doc,.docx,.ppt,.pptx" hidden />
+        <button id="uploadBtn" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline-block; vertical-align: middle; margin-right: 0.5rem;">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          Select Files
+        </button>
+        <p class="file-formats">Supported formats: PDF, DOC, DOCX, PPT, PPTX, TXT</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="footer-content">
+      <p>© 2025 AI Study Assistant — Powered by OpenAI</p>
+      <p class="footer-tagline">Transforming the way you learn, one file at a time.</p>
+    </div>
+  </footer>
+  <script src="script.js"></script>
+</body>
+</html>
