@@ -40,28 +40,38 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Notifications
-  function showNotification(message, type = "info") {
-    const notification = document.createElement("div");
-    const bgColor = type === "error" ? "var(--discord-danger)" : 
-                    type === "success" ? "var(--discord-success)" : 
-                    type === "warning" ? "var(--discord-warning)" : 
-                    "var(--discord-content)";
-    notification.style.cssText = `
-      position: fixed; top: 90px; right: 20px; background: ${bgColor};
-      color: var(--discord-text-primary); padding: 1rem 1.5rem;
-      border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
-      border: 1px solid var(--discord-border); z-index: 1000;
-      animation: slideIn 0.3s ease-out; max-width: 400px; font-weight: 500;
-    `;
-    notification.textContent = message;
-    document.body.appendChild(notification);
+let activeNotification = null;
 
-    const duration = type === "error" ? 5000 : 3000;
-    setTimeout(() => {
-      notification.style.animation = "slideOut 0.3s ease-out";
-      setTimeout(() => notification.remove(), 300);
-    }, duration);
+function showNotification(message, type = "info") {
+  // Remove existing notification instantly
+  if (activeNotification) {
+    activeNotification.remove();
+    activeNotification = null;
   }
+
+  const notification = document.createElement("div");
+  notification.className = `notification ${type}`;
+  notification.textContent = message;
+
+  document.body.appendChild(notification);
+  activeNotification = notification;
+
+  const duration = type === "error" ? 5000 : 3000;
+
+  setTimeout(() => {
+    if (!notification) return;
+
+    notification.style.animation = "slideOut 0.35s ease-out";
+    setTimeout(() => {
+      if (notification === activeNotification) {
+        notification.remove();
+        activeNotification = null;
+      }
+    }, 350);
+  }, duration);
+}
+
+
 
   // Upload and process files with backend
   async function uploadAndProcessFiles(files) {
@@ -144,23 +154,28 @@ document.addEventListener("DOMContentLoaded", () => {
       if (noDataMessage) noDataMessage.classList.remove("hidden");
     } else {
       const data = JSON.parse(explanationData);
-      setTimeout(() => {
-        loadingText.classList.add("hidden");
-        if (noDataMessage) noDataMessage.classList.add("hidden");
+      
+      // FIX: Render immediately if data exists
+      loadingText.classList.add("hidden");
+      if (noDataMessage) noDataMessage.classList.add("hidden");
+      
+      // Handle both array and single object formats
+      const sections = Array.isArray(data) ? data : [data];
+      explanationResult.innerHTML = sections.map(section => {
+        const topic = section.topic || "Study Material";
+        const content = section.content || (Array.isArray(section) ? section : [section]);
         
-        // Handle both array and single object formats
-        const sections = Array.isArray(data) ? data : [data];
-        
-        explanationResult.innerHTML = sections.map(section => {
-          const topic = section.topic || "Study Material";
-          const content = section.content || (Array.isArray(section) ? section : [section]);
-          return `
-            <p><strong>Topic:</strong> ${topic}</p>
-            ${content.map(p => `<p>${p}</p>`).join('')}
-          `;
-        }).join('') + `<div style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--discord-border);"><button class="btn" onclick="window.location.href='quiz.html'" style="width: 100%;">Take Quiz on This Topic</button></div>`;
-        explanationResult.classList.remove("hidden");
-      }, 1500);
+        // FIX: Changed to use the new 'explanation-topic-title' class for a blue underline, removing "Topic: "
+        return `
+          <h3 class="explanation-topic-title">${topic}</h3>
+          ${content.map(p => `<p>${p}</p>`).join('')}
+        `;
+      }).join('') + `
+        <div style="margin-top: 2rem;">
+            <button class="btn" onclick="window.location.href='quiz.html'">Take Quiz</button>
+        </div>
+      `;
+      explanationResult.classList.remove("hidden");
     }
   }
 
@@ -177,54 +192,34 @@ document.addEventListener("DOMContentLoaded", () => {
       if (noQuizMessage) noQuizMessage.classList.remove("hidden");
     } else {
       try {
-        const data = JSON.parse(quizData);
+        const questions = JSON.parse(quizData);
+        if (!Array.isArray(questions) || questions.length === 0) throw new Error("Quiz data is empty or invalid format.");
         
-        // Ensure data is an array
-        const questions = Array.isArray(data) ? data : (data ? [data] : []);
+        // FIX: Render immediately if data exists
+        loadingQuiz.classList.add("hidden");
+        if (noQuizMessage) noQuizMessage.classList.add("hidden");
         
-        if (questions.length === 0) {
-          loadingQuiz.classList.add("hidden");
-          quizContent.classList.add("hidden");
-          if (noQuizMessage) noQuizMessage.classList.remove("hidden");
-          return;
-        }
-        
-        setTimeout(() => {
-          loadingQuiz.classList.add("hidden");
-          if (noQuizMessage) noQuizMessage.classList.add("hidden");
+        const totalQuestions = questions.length;
+        quizContent.innerHTML = questions.map((q, index) => {
+          const optionsHtml = (q.options || []).map(option => `
+            <li data-index="${option.charAt(0)}">${option}</li>
+          `).join('');
 
-          // Build quiz HTML
-          const questionsHTML = questions.map((q, idx) => {
-            if (!q || !q.question) {
-              return '';
-            }
-            
-            const options = Array.isArray(q.options) ? q.options : [];
-            
-            return `
-              <div class="question" data-question-index="${idx}">
-                <p><strong>Question ${idx + 1}:</strong> ${q.question}</p>
-                <ul>
-                  ${options.map(opt => {
-                    const optionText = typeof opt === 'string' ? opt : String(opt);
-                    const optionLetter = optionText.trim().charAt(0);
-                    return `<li data-option="${optionLetter}">${optionText}</li>`;
-                  }).join('')}
-                </ul>
-              </div>
-            `;
-          }).filter(html => html.trim() !== '').join('');
-
-          quizContent.innerHTML = questionsHTML + `
-            <div style="display: flex; gap: 1rem; justify-content: space-between; margin-top: 2rem; flex-wrap: wrap;">
-              <button class="btn" style="background: var(--discord-content); color: var(--discord-text-secondary);" onclick="window.location.href='explanation.html'">Back to Explanation</button>
-              <button class="btn" id="submitQuiz">Submit All Answers</button>
+          return `
+            <div class="question" data-question-index="${index}">
+              <p>${index + 1}. ${q.question}</p>
+              <ul>${optionsHtml}</ul>
             </div>
           `;
+        }).join('') + `
+          <div style="margin-top: 2.5rem; text-align: center; display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+            <button class="btn btn-secondary" onclick="window.location.href='explanation.html'">Back to Explanation</button>
+            <button class="btn" id="submitQuiz">Submit All Answers</button>
+          </div>
+        `;
+        quizContent.classList.remove("hidden");
+        initializeQuiz(questions);
 
-          quizContent.classList.remove("hidden");
-          initializeQuiz(questions);
-        }, 1500);
       } catch (error) {
         loadingQuiz.classList.add("hidden");
         quizContent.classList.add("hidden");
@@ -233,6 +228,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
   }
+
 
   // Quiz interaction
   function initializeQuiz(quizData) {
@@ -243,27 +239,29 @@ document.addEventListener("DOMContentLoaded", () => {
     const questionsArray = Array.isArray(quizData) ? quizData : [quizData];
 
     // Set up click handlers for each question
-    questions.forEach((qElem, idx) => {
+    questions.forEach(qElem => {
       const options = qElem.querySelectorAll("li");
       options.forEach(opt => {
-        opt.addEventListener("click", () => {
-          // Remove selection from other options in this question
+        opt.addEventListener('click', function() {
+          if (submitBtn.disabled) return;
+          // Remove selected from all other options in this question
           options.forEach(o => o.classList.remove("selected"));
-          opt.classList.add("selected");
+          // Add selected to the clicked option
+          this.classList.add("selected");
         });
       });
     });
 
+    // Submit handler
     if (submitBtn) {
-      submitBtn.addEventListener("click", () => {
-        let allAnswered = true;
+      submitBtn.addEventListener('click', () => {
         let score = 0;
         const totalQuestions = questions.length;
+        let allAnswered = true;
 
         // Check if all questions are answered
-        questions.forEach((qElem, idx) => {
-          const selected = qElem.querySelector("li.selected");
-          if (!selected) {
+        questions.forEach(qElem => {
+          if (!qElem.querySelector(".selected")) {
             allAnswered = false;
           }
         });
@@ -306,4 +304,5 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
   }
+
 });
