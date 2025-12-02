@@ -6,33 +6,27 @@ from werkzeug.utils import secure_filename
 import json
 import traceback
 import re
-from openai import OpenAI  # Using OpenAI client for Gemini
+from openai import OpenAI
 import PyPDF2
 from io import BytesIO
 
-# --- Library Check and Imports ---
 try:
-    # Ensure PyPDF2 is available
     import PyPDF2
     PDF_SUPPORT = True
 except ImportError:
     print("PyPDF2 not installed. PDF extraction will be disabled. Install with: pip install pypdf2")
     PDF_SUPPORT = False
-# --- End Library Check ---
 
 # Load environment variables
 load_dotenv()
 
-# --- API Key Setup ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in .env file. Please obtain a key from Google AI Studio.")
 
-# --- Client Initialization (Using OpenAI client for Gemini) ---
 try:
     client = OpenAI(
         api_key=GEMINI_API_KEY, 
-        # Base URL to target the Gemini API endpoint
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/" 
     )
 except Exception as e:
@@ -47,7 +41,6 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 # File upload configuration
 ALLOWED_EXTENSIONS = {"pdf", "txt"}
 
-# --- Constants for size limits ---
 MAX_TEXT_SIZE_BYTES = 5 * 1024 * 1024 
 MAX_API_CONTEXT_SIZE = 8000
 MAX_PDF_PAGES = 1000
@@ -113,7 +106,6 @@ def extract_text_from_file(file):
         return f"[File type .{extension} is not supported.]"
 
 
-# UTILITY FUNCTION for robust JSON parsing
 def clean_and_parse_json(text, is_list=False):
     """
     Strips markdown blocks and aggressively isolates and cleans the JSON structure
@@ -124,7 +116,6 @@ def clean_and_parse_json(text, is_list=False):
     
     text = text.strip()
 
-    # 1. Strip markdown code blocks 
     if text.startswith('```'):
         tag_end_match = re.match(r'```[a-zA-Z]*\s*', text)
         if tag_end_match:
@@ -133,7 +124,6 @@ def clean_and_parse_json(text, is_list=False):
         text = text[:-3]
     text = text.strip()
 
-    # 2. Find the true start and end of the JSON object/array
     start_char = '[' if is_list else '{'
     end_char = ']' if is_list else '}'
 
@@ -143,15 +133,12 @@ def clean_and_parse_json(text, is_list=False):
     if start_index == -1 or end_index == -1 or end_index < start_index:
         return None
     
-    # Extract the strict JSON content
     json_content = text[start_index : end_index + 1]
 
-    # 3. Aggressively clean the isolated JSON content (remains the same)
     json_content = json_content.replace('“', '"').replace('”', '"').replace("‘", "'").replace("’", "'")
     json_content = json_content.replace('\xa0', ' ').replace('\u00A0', ' ')
     json_content = re.sub(r'[\x00-\x1F\x7F]', '', json_content)
     
-    # 4. Attempt parsing
     try:
         return json.loads(json_content)
     except json.JSONDecodeError as e:
@@ -184,26 +171,21 @@ def call_openai_api(prompt, max_tokens=2000):
         
         print("➡ Sending prompt to Gemini 2.5 Flash API via OpenAI client...")
 
-        # --- MODIFIED SYSTEM INSTRUCTION to enforce Unicode symbols ---
         system_content = (
             "You are an educational AI assistant. You MUST respond with ONLY valid, well-formed JSON, "
             "and no other conversational text. Do NOT wrap the JSON in markdown backticks (```json). "
             "For all mathematical or special symbols, such as square root, pi, or summation, "
             "YOU MUST USE THE ACTUAL UNICODE SYMBOL (e.g., √, π, Σ) and NOT text shortcuts (like sqrt, pi, sum)."
         )
-        # --- END MODIFIED INSTRUCTION ---
         
         response = client.chat.completions.create(
-            # Using the fast, efficient model
             model="gemini-2.5-flash-lite", 
             messages=[
-                # System instructions are crucial for format adherence
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=max_tokens,
             temperature=0.7, 
-            # 💡 CRITICAL: Force JSON output
             response_format={ "type": "json_object" } 
         )
         
@@ -272,8 +254,6 @@ def process_files():
         if len(combined_text) > MAX_API_CONTEXT_SIZE:
             combined_text = combined_text[:MAX_API_CONTEXT_SIZE] + "\n\n[...Content truncated for API processing efficiency]"
 
-        # --- Generate Explanation ---
-        # *** MODIFIED EXPLANATION PROMPT ***
         explanation_prompt = f"""You are an educational AI assistant. Follow ALL instructions exactly as written.
 
 You will analyze the following study material and produce a structured explanation.  
@@ -325,15 +305,11 @@ If you understand, output ONLY the JSON object following all rules above.
         if explanation_data is None:
             explanation_data = {
                 "topic": "Study Material Analysis (Failed to Parse JSON)",
-                # Fallback to first 5 newline-separated sections
                 "content": explanation_text.split('\n\n')[:5] if explanation_text else ["Unable to generate explanation or parse response."]
             }
         
-        # Ensure explanation_for_storage is a list containing the dictionary
         explanation_for_storage = [explanation_data] if isinstance(explanation_data, dict) else explanation_data
 
-        # --- Generate Quiz Questions ---
-        # *** MODIFIED QUIZ PROMPT ***
         quiz_prompt = f"""Based on this study material, create 10 multiple-choice questions that thoroughly test understanding of all the important concepts.
 
 Study Material:
@@ -374,7 +350,6 @@ Only return the JSON array, no additional text or characters. DO NOT include the
             temp_quiz_data = clean_and_parse_json(quiz_text, is_list=True)
             
             if temp_quiz_data:
-                # Handle cases where the model wraps the array in a dictionary
                 if not isinstance(temp_quiz_data, list):
                     if isinstance(temp_quiz_data, dict) and 'quiz' in temp_quiz_data and isinstance(temp_quiz_data['quiz'], list):
                         temp_quiz_data = temp_quiz_data['quiz']
@@ -385,7 +360,6 @@ Only return the JSON array, no additional text or characters. DO NOT include the
 
                 valid_questions = []
                 for q in temp_quiz_data:
-                    # Basic validation for a quiz question structure
                     if (isinstance(q, dict) and 
                         q.get('question') and 
                         q.get('options') and 
@@ -398,7 +372,7 @@ Only return the JSON array, no additional text or characters. DO NOT include the
                 quiz_data = valid_questions
             
         # Final Quiz Fallback
-        if quiz_data is None or len(quiz_data) < 5: # Changed minimum viable quiz size check to 5
+        if quiz_data is None or len(quiz_data) < 5:
             quiz_status_message = f"Failed to generate enough valid questions (parsed only {len(quiz_data) if quiz_data else 0}). Explanation generated successfully."
             quiz_data = [
                 {
@@ -407,8 +381,6 @@ Only return the JSON array, no additional text or characters. DO NOT include the
                     "correctAnswer": "D"
                 }
             ]
-            
-        # --- End Quiz Handling ---
 
         print(f"Returning explanation (length: {len(explanation_for_storage)})")
         print(f"Returning quiz (length: {len(quiz_data)})")
