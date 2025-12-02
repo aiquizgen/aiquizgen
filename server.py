@@ -5,25 +5,52 @@ from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 import json
 import traceback
-from openai import OpenAI
+import re
+from openai import OpenAI  # Using OpenAI client for Gemini
+import PyPDF2
+from io import BytesIO
+
+# --- Library Check and Imports ---
+try:
+    # Ensure PyPDF2 is available
+    import PyPDF2
+    PDF_SUPPORT = True
+except ImportError:
+    print("PyPDF2 not installed. PDF extraction will be disabled. Install with: pip install pypdf2")
+    PDF_SUPPORT = False
+# --- End Library Check ---
 
 # Load environment variables
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY not found in .env file.")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# --- API Key Setup ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY not found in .env file. Please obtain a key from Google AI Studio.")
+
+# --- Client Initialization (Using OpenAI client for Gemini) ---
+try:
+    client = OpenAI(
+        api_key=GEMINI_API_KEY, 
+        # Base URL to target the Gemini API endpoint
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/" 
+    )
+except Exception as e:
+    print(f"Error initializing OpenAI client for Gemini: {e}")
+    client = None
 
 # Flask setup
 app = Flask(__name__, static_folder="public")
 CORS(app)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 
 
 # File upload configuration
 ALLOWED_EXTENSIONS = {"pdf", "txt"}
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# --- Constants for size limits ---
+MAX_TEXT_SIZE_BYTES = 5 * 1024 * 1024 
+MAX_API_CONTEXT_SIZE = 8000
+MAX_PDF_PAGES = 1000
 
 def allowed_file(filename):
     """Checks if the file extension is one of the allowed types (pdf, txt)."""
@@ -33,28 +60,26 @@ def extract_text_from_file(file):
     """Extract text from uploaded TXT or PDF file."""
     filename = file.filename
     extension = filename.rsplit(".", 1)[1].lower()
-
+    
+    file.seek(0)
+    file_bytes = file.read()
+    
     if extension == "txt":
         try:
-            file.seek(0)
-            content = file.read()
-            # Limit text file size to 5MB
-            if len(content) > 5 * 1024 * 1024:
-                content = content[:5 * 1024 * 1024]
-            return content.decode("utf-8", errors="ignore")
+            if len(file_bytes) > MAX_TEXT_SIZE_BYTES:
+                file_bytes = file_bytes[:MAX_TEXT_SIZE_BYTES]
+                
+            return file_bytes.decode("utf-8", errors="ignore")
         except Exception as e:
-            print(f"TXT processing error: {e}")
-            return None
+            return f"[TXT parsing failed for {filename}. Error: {e}]"
     
-    elif extension == "pdf":
+    elif extension == "pdf" and PDF_SUPPORT:
         try:
-            import PyPDF2 
-            file.seek(0)
-            pdf_reader = PyPDF2.PdfReader(file)
+            pdf_file = BytesIO(file_bytes)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
             text = ""
-            max_pages = 100  # Limit to first 100 pages for large PDFs
             total_pages = len(pdf_reader.pages)
-            pages_to_process = min(total_pages, max_pages)
+            pages_to_process = min(total_pages, MAX_PDF_PAGES)
             
             for i in range(pages_to_process):
                 try:
@@ -62,52 +87,131 @@ def extract_text_from_file(file):
                     page_text = page.extract_text()
                     if page_text:
                         text += page_text + "\n"
-                    if len(text) > 50000:
-                        text = text[:50000] + "\n[Content truncated due to size]"
+                        
+                    if len(text) > MAX_API_CONTEXT_SIZE * 2: 
+                        text = text[:MAX_API_CONTEXT_SIZE * 2] + "\n[Content truncated due to size limit during extraction]"
                         break
-                except Exception as e:
-                    # Ignore pages that fail to extract text
+                except Exception as page_e:
+                    print(f"Warning: Failed to extract text from page {i+1} of {filename}. Error: {page_e}")
                     continue
             
             if pages_to_process < total_pages:
                 text += f"\n[Note: PDF has {total_pages} pages, processed first {pages_to_process} pages]"
             
-            return text if text.strip() else None
-        except ImportError:
-            print("PyPDF2 not installed. Install with: pip install pypdf2")
-            return "[PDF file uploaded but PyPDF2 library not installed for text extraction.]"
+            if text.strip():
+                return text
+            else:
+                return f"[Text extraction from {filename} failed. File may be a scanned image without a text layer.]"
+        
         except Exception as e:
-            print(f"PDF processing error: {e}")
-            return None
+            return f"[PDF parsing failed for {filename}. The file may be corrupt or non-standard. Error: {e}]"
+    
+    elif extension == "pdf" and not PDF_SUPPORT:
+          return "[PDF file uploaded but PyPDF2 library not installed for text extraction.]"
     
     else:
+        return f"[File type .{extension} is not supported.]"
+
+
+# UTILITY FUNCTION for robust JSON parsing
+def clean_and_parse_json(text, is_list=False):
+    """
+    Strips markdown blocks and aggressively isolates and cleans the JSON structure
+    before attempting to parse it to handle common LLM output errors.
+    """
+    if not text:
+        return None
+    
+    text = text.strip()
+
+    # 1. Strip markdown code blocks 
+    if text.startswith('```'):
+        tag_end_match = re.match(r'```[a-zA-Z]*\s*', text)
+        if tag_end_match:
+            text = text[tag_end_match.end():]
+    if text.endswith('```'):
+        text = text[:-3]
+    text = text.strip()
+
+    # 2. Find the true start and end of the JSON object/array
+    start_char = '[' if is_list else '{'
+    end_char = ']' if is_list else '}'
+
+    start_index = text.find(start_char)
+    end_index = text.rfind(end_char)
+
+    if start_index == -1 or end_index == -1 or end_index < start_index:
+        return None
+    
+    # Extract the strict JSON content
+    json_content = text[start_index : end_index + 1]
+
+    # 3. Aggressively clean the isolated JSON content (remains the same)
+    json_content = json_content.replace('“', '"').replace('”', '"').replace("‘", "'").replace("’", "'")
+    json_content = json_content.replace('\xa0', ' ').replace('\u00A0', ' ')
+    json_content = re.sub(r'[\x00-\x1F\x7F]', '', json_content)
+    
+    # 4. Attempt parsing
+    try:
+        return json.loads(json_content)
+    except json.JSONDecodeError as e:
+        print(f"Final JSONDecodeError after cleaning: {e}")
+        print(f"Content that failed to load (snippet): {json_content[:200].replace('\n', '\\n')}...") 
+        
+        if "Expecting ',' delimiter" in str(e) or "Extra data" in str(e):
+            try:
+                re_pattern = r',\s*([}\]])'
+                fixed_content = re.sub(re_pattern, r'\1', json_content)
+                print("Attempting to fix trailing comma error...")
+                return json.loads(fixed_content)
+            except json.JSONDecodeError:
+                pass 
+
         return None
 
-# OpenAI API call using SDK
+
+# Gemini API Call Function (via OpenAI client)
 def call_openai_api(prompt, max_tokens=2000):
-    """Call OpenAI API via the Python SDK"""
+    """Call the Gemini API using the OpenAI SDK and the compatible endpoint."""
+    if client is None:
+        print("❌ API client not initialized.")
+        return None
+        
     try:
         if not prompt.strip():
             print("⚠️ Empty prompt, skipping API call")
             return None
         
-        print("➡ Sending prompt to OpenAI API...")
+        print("➡ Sending prompt to Gemini 2.5 Flash API via OpenAI client...")
+
+        # --- MODIFIED SYSTEM INSTRUCTION to enforce Unicode symbols ---
+        system_content = (
+            "You are an educational AI assistant. You MUST respond with ONLY valid, well-formed JSON, "
+            "and no other conversational text. Do NOT wrap the JSON in markdown backticks (```json). "
+            "For all mathematical or special symbols, such as square root, pi, or summation, "
+            "YOU MUST USE THE ACTUAL UNICODE SYMBOL (e.g., √, π, Σ) and NOT text shortcuts (like sqrt, pi, sum)."
+        )
+        # --- END MODIFIED INSTRUCTION ---
+        
         response = client.chat.completions.create(
-            model="gpt-4o-mini", 
+            # Using the fast, efficient model
+            model="gemini-2.5-flash-lite", 
             messages=[
-                {"role": "system", "content": "You are an educational AI assistant. Always respond with valid JSON when requested."},
+                # System instructions are crucial for format adherence
+                {"role": "system", "content": system_content},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=max_tokens,
-            temperature=0.7
+            temperature=0.7, 
+            # 💡 CRITICAL: Force JSON output
+            response_format={ "type": "json_object" } 
         )
         
         output_text = response.choices[0].message.content
-        print("✅ Received response from OpenAI API")
+        print("✅ Received response from Gemini API")
         return output_text
     except Exception as e:
-        print(f"❌ OpenAI API error: {e}")
-        import traceback
+        print(f"❌ Gemini API error: {e}")
         traceback.print_exc()
         return None
 
@@ -143,86 +247,104 @@ def process_files():
                 filename = secure_filename(file.filename)
                 
                 try:
-                    
                     text = extract_text_from_file(file)
-                    if text:
+                    
+                    if text and text.startswith('['):
+                         errors.append(f"{filename}: {text}")
+                    elif text:
                         combined_text += f"\n\n--- Content from {filename} ---\n\n{text}"
                         processed_files.append(filename)
                     else:
-                        errors.append(f"{filename}: Could not extract text")
+                        errors.append(f"{filename}: Could not extract text (returned empty content).")
+
                 except Exception as e:
-                    errors.append(f"{filename}: {str(e)}")
+                    errors.append(f"{filename}: Processing error: {str(e)}")
             else:
                  if file and file.filename:
                     errors.append(f"{file.filename}: File type not supported. Only PDF and TXT are supported.")
-
-
+        
         if not combined_text.strip():
-            error_msg = "Could not extract text from files."
+            error_msg = "Could not extract usable text from files."
             if errors:
-                error_msg += " " + " ".join(errors)
+                error_msg += " Detailed errors: " + " | ".join(errors)
             return jsonify({"error": error_msg}), 400
 
-        # Generate explanation
-        if len(combined_text) > 8000:
-            combined_text = combined_text[:8000] + "...\n[Content truncated for processing]"
-        
-        explanation_prompt = f"""You are an educational AI assistant. Analyze the following study material and create a comprehensive, easy-to-understand explanation.
+        if len(combined_text) > MAX_API_CONTEXT_SIZE:
+            combined_text = combined_text[:MAX_API_CONTEXT_SIZE] + "\n\n[...Content truncated for API processing efficiency]"
+
+        # --- Generate Explanation ---
+        # *** MODIFIED EXPLANATION PROMPT ***
+        explanation_prompt = f"""You are an educational AI assistant. Follow ALL instructions exactly as written.
+
+You will analyze the following study material and produce a structured explanation.  
+You MUST follow the formatting rules exactly.  
+You MUST NOT add any extra text, comments, disclaimers, apologies, introductions, conclusions, or explanations outside of the required JSON.  
+You MUST NOT use markdown formatting.  
+You MUST NOT wrap the JSON in backticks or code blocks.  
+You MUST ONLY return valid JSON as the final output.
 
 Study Material:
 {combined_text}
 
-Please provide:
-1. A clear topic/title for this material
-2. A detailed explanation broken into 3-5 paragraphs in simple language that summarizes the key concepts, main ideas, and important information in an educational and easy-to-understand manner.
+Your task:
 
-Format your response as JSON with this structure:
+1. Create a clear, concise topic/title for the material.
+2. Create **exactly 5 paragraphs** of explanation in simple, educational language.  
+    Each paragraph must summarize a different key idea, concept, or section from the study material.
+3. Return the output **only** in this JSON structure:
+
 {{
   "topic": "Topic Title Here",
   "content": [
     "First paragraph of explanation...",
-    "Second paragraph...",
-    "Third paragraph...",
-    "Fourth paragraph...",
-    "Fifth paragraph..."
+    "Second paragraph of explanation...",
+    "Third paragraph of explanation...",
+    "Fourth paragraph of explanation...",
+    "Fifth paragraph of explanation..."
   ]
 }}
 
-Only return the JSON, no additional text."""
+Formatting Rules (MANDATORY):
+- The JSON MUST be valid and properly formatted.
+- The "topic" field MUST be a single string.
+- The "content" field MUST be an array containing EXACTLY 5 strings.
+- Do NOT include more or fewer paragraphs.
+- Do NOT include extra fields.
+- Do NOT include trailing commas.
+- Do NOT include any text before or after the JSON object.
+
+If you understand, output ONLY the JSON object following all rules above.
+"""
 
         explanation_text = call_openai_api(explanation_prompt)
+        explanation_data = None
         
-        if not explanation_text:
-            return jsonify({"error": "Failed to generate explanation. Please try again."}), 500
+        if explanation_text:
+            explanation_data = clean_and_parse_json(explanation_text, is_list=False)
         
-        explanation_text = explanation_text.strip()
-        if explanation_text.startswith('```json'):
-            explanation_text = explanation_text.replace('```json', '').replace('```', '').strip()
-        elif explanation_text.startswith('```'):
-            explanation_text = explanation_text.replace('```', '').strip()
-        
-        try:
-            explanation_data = json.loads(explanation_text)
-        except json.JSONDecodeError as e:
-            print(f"JSON parsing error: {e}")
-            print(f"Raw response: {explanation_text[:500]}")
+        if explanation_data is None:
             explanation_data = {
-                "topic": "Study Material Analysis",
-                "content": explanation_text.split('\n\n')[:5] if explanation_text else ["Unable to generate explanation."]
+                "topic": "Study Material Analysis (Failed to Parse JSON)",
+                # Fallback to first 5 newline-separated sections
+                "content": explanation_text.split('\n\n')[:5] if explanation_text else ["Unable to generate explanation or parse response."]
             }
+        
+        # Ensure explanation_for_storage is a list containing the dictionary
+        explanation_for_storage = [explanation_data] if isinstance(explanation_data, dict) else explanation_data
 
-        # Generate quiz questions
-        quiz_prompt = f"""Based on this study material, create 5-10 multiple-choice questions that test understanding of the most important concepts.
+        # --- Generate Quiz Questions ---
+        # *** MODIFIED QUIZ PROMPT ***
+        quiz_prompt = f"""Based on this study material, create 10 multiple-choice questions that thoroughly test understanding of all the important concepts.
 
 Study Material:
 {combined_text}
 
 Create questions with:
 - Clear, concise questions
-- 4 answer options labeled A, B, C, D for each question
+- Exactly 4 answer options labeled A, B, C, D for each question
 - One correct answer per question
 
-Format your response as JSON array:
+Format your response as a JSON array of question objects, ensuring you generate exactly 10 questions:
 [
   {{
     "question": "Question text here?",
@@ -239,77 +361,76 @@ Format your response as JSON array:
     "options": ["A) Option A", "B) Option B", "C) Option C", "D) Option D"],
     "correctAnswer": "A"
   }}
+  // ... continue for 10 total questions
 ]
 
-Only return the JSON array, no additional text."""
+Only return the JSON array, no additional text or characters. DO NOT include the JSON in markdown backticks (```json)."""
 
         quiz_text = call_openai_api(quiz_prompt)
+        quiz_data = None
+        quiz_status_message = "Success"
         
-        if not quiz_text:
-            return jsonify({"error": "Failed to generate quiz. Please try again."}), 500
-        
-        quiz_text = quiz_text.strip()
-        if quiz_text.startswith('```json'):
-            quiz_text = quiz_text.replace('```json', '').replace('```', '').strip()
-        elif quiz_text.startswith('```'):
-            quiz_text = quiz_text.replace('```', '').strip()
-        
-        try:
-            quiz_data = json.loads(quiz_text)
-            if not isinstance(quiz_data, list):
-                quiz_data = [quiz_data]
+        if quiz_text:
+            temp_quiz_data = clean_and_parse_json(quiz_text, is_list=True)
             
-            valid_questions = []
-            for i, q in enumerate(quiz_data):
-                if isinstance(q, dict) and 'question' in q and 'options' in q and 'correctAnswer' in q:
-                    valid_questions.append(q)
-                else:
-                    print(f"Warning: Invalid question structure at index {i}: {q}")
+            if temp_quiz_data:
+                # Handle cases where the model wraps the array in a dictionary
+                if not isinstance(temp_quiz_data, list):
+                    if isinstance(temp_quiz_data, dict) and 'quiz' in temp_quiz_data and isinstance(temp_quiz_data['quiz'], list):
+                        temp_quiz_data = temp_quiz_data['quiz']
+                    elif isinstance(temp_quiz_data, dict) and 'questions' in temp_quiz_data and isinstance(temp_quiz_data['questions'], list):
+                        temp_quiz_data = temp_quiz_data['questions']
+                    else:
+                        temp_quiz_data = [temp_quiz_data] 
+
+                valid_questions = []
+                for q in temp_quiz_data:
+                    # Basic validation for a quiz question structure
+                    if (isinstance(q, dict) and 
+                        q.get('question') and 
+                        q.get('options') and 
+                        q.get('correctAnswer') and
+                        isinstance(q['options'], list) and
+                        len(q['options']) >= 4):
+                        
+                        valid_questions.append(q)
+                
+                quiz_data = valid_questions
             
-            if not valid_questions:
-                raise ValueError("No valid questions found in quiz data")
-            
-            quiz_data = valid_questions
-            print(f"✓ Generated {len(quiz_data)} valid quiz questions")
-            
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"Quiz generation/parsing error: {e}")
-            print(f"Raw response: {quiz_text[:500]}")
+        # Final Quiz Fallback
+        if quiz_data is None or len(quiz_data) < 5: # Changed minimum viable quiz size check to 5
+            quiz_status_message = f"Failed to generate enough valid questions (parsed only {len(quiz_data) if quiz_data else 0}). Explanation generated successfully."
             quiz_data = [
                 {
-                    "question": "What is the main topic of the study material?",
-                    "options": ["A) Option A", "B) Option B", "C) Option C", "D) Option D"],
-                    "correctAnswer": "B"
+                    "question": "Quiz generation failed (Error: Not enough valid questions generated).",
+                    "options": ["A) Please check the content.", "B) Try re-uploading the file.", "C) The material might be too short or complex.", "D) All of the above."],
+                    "correctAnswer": "D"
                 }
             ]
-        except Exception as e:
-            print(f"Error processing quiz data: {e}")
-            quiz_data = [
-                {
-                    "question": "What is the main topic of the study material?",
-                    "options": ["A) Option A", "B) Option B", "C) Option C", "D) Option D"],
-                    "correctAnswer": "B"
-                }
-            ]
+            
+        # --- End Quiz Handling ---
 
-        explanation_for_storage = [explanation_data] if isinstance(explanation_data, dict) else explanation_data
-
-        print(f"Returning explanation (type: {type(explanation_for_storage)}, length: {len(explanation_for_storage) if isinstance(explanation_for_storage, list) else 'N/A'})")
-        print(f"Returning quiz (type: {type(quiz_data)}, length: {len(quiz_data)})")
+        print(f"Returning explanation (length: {len(explanation_for_storage)})")
+        print(f"Returning quiz (length: {len(quiz_data)})")
         
         return jsonify({
             "success": True,
             "explanation": explanation_for_storage,
             "quiz": quiz_data,
             "files_processed": processed_files,
+            "quiz_status": quiz_status_message,
+            "extraction_errors": errors
         })
 
     except Exception as e:
         print(f"Error in process_files: {e}")
         print(traceback.format_exc())
-        return jsonify({"error": f"Processing error: {str(e)}"}), 500
+        return jsonify({"error": f"An internal server error occurred during processing: {str(e)}"}), 500
 
 # Run server
 if __name__ == "__main__":
-    print("Starting server")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    if client is None:
+        print("🛑 Server not starting due to failed API client initialization.")
+    else:
+        print("Starting server with Gemini 2.5 Flash API support")
+        app.run(host="0.0.0.0", port=5000, debug=True)
