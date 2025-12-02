@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 import json
 import traceback
 import re
-from openai import OpenAI
+from openai import OpenAI  # Using OpenAI client for Gemini
 import PyPDF2
 from io import BytesIO
 
@@ -16,7 +16,6 @@ try:
     import PyPDF2
     PDF_SUPPORT = True
 except ImportError:
-    # In a production environment, this should be logged, not just printed
     print("PyPDF2 not installed. PDF extraction will be disabled. Install with: pip install pypdf2")
     PDF_SUPPORT = False
 # --- End Library Check ---
@@ -25,11 +24,9 @@ except ImportError:
 load_dotenv()
 
 # --- API Key Setup ---
-# Use os.environ.get() for safer environment variable access on platforms like Render
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    # This will fail the deployment if the variable is missing, which is correct for production
-    raise ValueError("GEMINI_API_KEY environment variable not set.")
+    raise ValueError("GEMINI_API_KEY not found in .env file. Please obtain a key from Google AI Studio.")
 
 # --- Client Initialization (Using OpenAI client for Gemini) ---
 try:
@@ -40,14 +37,11 @@ try:
     )
 except Exception as e:
     print(f"Error initializing OpenAI client for Gemini: {e}")
-    # Set client to None if initialization fails
     client = None
 
 # Flask setup
-# Static folder is 'public' as in your original code
 app = Flask(__name__, static_folder="public")
 CORS(app)
-# Max content length is 50MB
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 
 
 # File upload configuration
@@ -58,7 +52,6 @@ MAX_TEXT_SIZE_BYTES = 5 * 1024 * 1024
 MAX_API_CONTEXT_SIZE = 8000
 MAX_PDF_PAGES = 1000
 
-# Function Definitions (no change needed for business logic)
 def allowed_file(filename):
     """Checks if the file extension is one of the allowed types (pdf, txt)."""
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -119,6 +112,7 @@ def extract_text_from_file(file):
     else:
         return f"[File type .{extension} is not supported.]"
 
+
 # UTILITY FUNCTION for robust JSON parsing
 def clean_and_parse_json(text, is_list=False):
     """
@@ -177,8 +171,7 @@ def clean_and_parse_json(text, is_list=False):
 
 
 # Gemini API Call Function (via OpenAI client)
-# Increased max_tokens for safety, although the model will often use fewer.
-def call_openai_api(prompt, max_tokens=3000):
+def call_openai_api(prompt, max_tokens=2000):
     """Call the Gemini API using the OpenAI SDK and the compatible endpoint."""
     if client is None:
         print("❌ API client not initialized.")
@@ -189,20 +182,20 @@ def call_openai_api(prompt, max_tokens=3000):
             print("⚠️ Empty prompt, skipping API call")
             return None
         
-        print("➡ Sending prompt to Gemini 2.5 Lite API via OpenAI client...")
+        print("➡ Sending prompt to Gemini 2.5 Flash API via OpenAI client...")
 
-        # --- System Instruction ---
+        # --- MODIFIED SYSTEM INSTRUCTION to enforce Unicode symbols ---
         system_content = (
             "You are an educational AI assistant. You MUST respond with ONLY valid, well-formed JSON, "
             "and no other conversational text. Do NOT wrap the JSON in markdown backticks (```json). "
             "For all mathematical or special symbols, such as square root, pi, or summation, "
             "YOU MUST USE THE ACTUAL UNICODE SYMBOL (e.g., √, π, Σ) and NOT text shortcuts (like sqrt, pi, sum)."
         )
-        # --- End Instruction ---
+        # --- END MODIFIED INSTRUCTION ---
         
         response = client.chat.completions.create(
             # Using the fast, efficient model
-            model="gemini-2.5-lite", 
+            model="gemini-2.5-flash-lite", 
             messages=[
                 # System instructions are crucial for format adherence
                 {"role": "system", "content": system_content},
@@ -219,11 +212,10 @@ def call_openai_api(prompt, max_tokens=3000):
         return output_text
     except Exception as e:
         print(f"❌ Gemini API error: {e}")
-        # In a production environment, this is crucial for debugging
         traceback.print_exc()
         return None
 
-# Routes (no changes needed)
+# Routes
 @app.route("/")
 def index():
     return send_from_directory("public", "index.html")
@@ -258,7 +250,7 @@ def process_files():
                     text = extract_text_from_file(file)
                     
                     if text and text.startswith('['):
-                        errors.append(f"{filename}: {text}")
+                         errors.append(f"{filename}: {text}")
                     elif text:
                         combined_text += f"\n\n--- Content from {filename} ---\n\n{text}"
                         processed_files.append(filename)
@@ -268,7 +260,7 @@ def process_files():
                 except Exception as e:
                     errors.append(f"{filename}: Processing error: {str(e)}")
             else:
-                if file and file.filename:
+                 if file and file.filename:
                     errors.append(f"{file.filename}: File type not supported. Only PDF and TXT are supported.")
         
         if not combined_text.strip():
@@ -281,6 +273,7 @@ def process_files():
             combined_text = combined_text[:MAX_API_CONTEXT_SIZE] + "\n\n[...Content truncated for API processing efficiency]"
 
         # --- Generate Explanation ---
+        # *** MODIFIED EXPLANATION PROMPT ***
         explanation_prompt = f"""You are an educational AI assistant. Follow ALL instructions exactly as written.
 
 You will analyze the following study material and produce a structured explanation.  
@@ -340,6 +333,7 @@ If you understand, output ONLY the JSON object following all rules above.
         explanation_for_storage = [explanation_data] if isinstance(explanation_data, dict) else explanation_data
 
         # --- Generate Quiz Questions ---
+        # *** MODIFIED QUIZ PROMPT ***
         quiz_prompt = f"""Based on this study material, create 10 multiple-choice questions that thoroughly test understanding of all the important concepts.
 
 Study Material:
@@ -404,7 +398,7 @@ Only return the JSON array, no additional text or characters. DO NOT include the
                 quiz_data = valid_questions
             
         # Final Quiz Fallback
-        if quiz_data is None or len(quiz_data) < 5: # Minimum viable quiz size check
+        if quiz_data is None or len(quiz_data) < 5: # Changed minimum viable quiz size check to 5
             quiz_status_message = f"Failed to generate enough valid questions (parsed only {len(quiz_data) if quiz_data else 0}). Explanation generated successfully."
             quiz_data = [
                 {
@@ -431,5 +425,12 @@ Only return the JSON array, no additional text or characters. DO NOT include the
     except Exception as e:
         print(f"Error in process_files: {e}")
         print(traceback.format_exc())
-        # Return a generic 500 error for production
-        return jsonify({"error": "An internal server error occurred during processing. Please check server logs."}), 500
+        return jsonify({"error": f"An internal server error occurred during processing: {str(e)}"}), 500
+
+# Run server
+if __name__ == "__main__":
+    if client is None:
+        print("🛑 Server not starting due to failed API client initialization.")
+    else:
+        print("Starting server with Gemini 2.5 Flash API support")
+        app.run(host="0.0.0.0", port=5000, debug=True)
